@@ -1,33 +1,32 @@
-from fastapi import FastAPI, HTTPException
-import boto3
+import sys
 import os
 
+print("PYTHONPATH:", sys.path)
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from mangum import Mangum
+from dotenv import load_dotenv
+import os
+from application.services import AthenaService
+from interfaces.api import router as api_router
+
+# Cargar variables de entorno solo si se está ejecutando localmente
+if os.getenv("ENVIRONMENT") != "PRODUCTION":
+    load_dotenv()
+
 app = FastAPI()
-athena = boto3.client('athena')
 
-ATHENA_OUTPUT_LOCATION = os.getenv("ATHENA_OUTPUT_LOCATION")
+athena_service = AthenaService()
+app.include_router(api_router)
 
-@app.post("/execute_query")
-def execute_query(database: str, query: str):
-    if not ATHENA_OUTPUT_LOCATION:
-        raise HTTPException(status_code=500, detail="ATHENA_OUTPUT_LOCATION not configured")
-    
-    try:
-        response = athena.start_query_execution(
-            QueryString=query,
-            QueryExecutionContext={'Database': database},
-            ResultConfiguration={'OutputLocation': ATHENA_OUTPUT_LOCATION}
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.exception_handler(Exception)
+async def exception_handler(request: Request, exc: Exception):
+    return JSONResponse(status_code=500, content={"message": str(exc)})
 
-    return {"query_execution_id": response['QueryExecutionId']}
+# Handler para AWS Lambda
+handler = Mangum(app)
 
-@app.get("/get_query_results")
-def get_query_results(query_execution_id: str):
-    try:
-        response = athena.get_query_results(QueryExecutionId=query_execution_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return {"result": response['ResultSet']}
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

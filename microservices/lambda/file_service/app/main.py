@@ -1,34 +1,27 @@
-from fastapi import FastAPI, HTTPException
-from typing import Union
-import boto3
-import pandas as pd
-import pyarrow.parquet as pq
-import pyarrow as pa
-from tempfile import TemporaryFile
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from mangum import Mangum
+from dotenv import load_dotenv
 import os
+from application.services import FileService
+from interfaces.api import router as api_router
+
+# Cargar variables de entorno solo si se está ejecutando localmente
+if os.getenv("ENVIRONMENT") != "PRODUCTION":
+    load_dotenv()
 
 app = FastAPI()
-s3 = boto3.client('s3')
 
-S3_BUCKET = os.getenv("S3_BUCKET")
+file_service = FileService()
+app.include_router(api_router)
 
-@app.post("/generate_file")
-def generate_file(file_type: str, file_name: str, data: Union[dict, list]):
-    if not S3_BUCKET:
-        raise HTTPException(status_code=500, detail="S3_BUCKET not configured")
-    
-    if file_type == 'excel':
-        df = pd.DataFrame(data)
-        with TemporaryFile() as tmp:
-            df.to_excel(tmp, index=False)
-            tmp.seek(0)
-            s3.upload_fileobj(tmp, S3_BUCKET, file_name)
-    elif file_type == 'parquet':
-        table = pa.Table.from_pandas(pd.DataFrame(data))
-        with TemporaryFile() as tmp:
-            pq.write_table(table, tmp)
-            tmp.seek(0)
-            s3.upload_fileobj(tmp, S3_BUCKET, file_name)
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported file type")
-    return {"message": f"{file_type.capitalize()} file generated successfully and uploaded to {S3_BUCKET}/{file_name}"}
+@app.exception_handler(Exception)
+async def exception_handler(request: Request, exc: Exception):
+    return JSONResponse(status_code=500, content={"message": str(exc)})
+
+# Handler para AWS Lambda
+handler = Mangum(app)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

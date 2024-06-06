@@ -1,8 +1,13 @@
-from aws_cdk import core
-from aws_cdk import aws_lambda as _lambda
-from aws_cdk import aws_apigateway as apigw
-from aws_cdk import aws_iam as iam
-from aws_cdk import aws_secretsmanager as secretsmanager
+from aws_cdk import (
+    core,
+    aws_lambda as _lambda,
+    aws_apigateway as apigw,
+    aws_iam as iam,
+    aws_secretsmanager as secretsmanager,
+    aws_ecr_assets as ecr_assets,
+    Duration
+)
+from aws_cdk.aws_lambda import DockerImageFunction, DockerImageCode
 
 class MyMicroservicesProjectStack(core.Stack):
 
@@ -29,15 +34,15 @@ class MyMicroservicesProjectStack(core.Stack):
             ]
         )
 
-        # File Service Lambda
-        file_service_lambda = _lambda.Function(self, "FileServiceHandler",
-            runtime=_lambda.Runtime.PYTHON_3_8,
-            code=_lambda.Code.from_asset("lambda/file_service"),
-            handler="main.lambda_handler",
+        # File Service Lambda using Docker Image
+        file_service_docker_image = DockerImageCode.from_image_asset("lambda/file_service")
+        
+        file_service_lambda = DockerImageFunction(self, "FileServiceHandler",
+            code=file_service_docker_image,
             role=lambda_role,
+            timeout=Duration.seconds(900),
             environment={
-                "S3_BUCKET": secret.secret_value_from_json("S3_BUCKET").to_string(),
-                "SECRET_KEY": secret.secret_value_from_json("SECRET_KEY").to_string()
+                "S3_BUCKET": secret.secret_value_from_json("S3_BUCKET").to_string()
             }
         )
 
@@ -46,16 +51,16 @@ class MyMicroservicesProjectStack(core.Stack):
             handler=file_service_lambda
         )
 
-        # Orchestration Service Lambda
-        orchestration_service_lambda = _lambda.Function(self, "OrchestrationServiceHandler",
-            runtime=_lambda.Runtime.PYTHON_3_8,
-            code=_lambda.Code.from_asset("lambda/orchestration_service"),
-            handler="main.lambda_handler",
+        # Orchestration Service Lambda using Docker Image
+        orchestration_service_docker_image = DockerImageCode.from_image_asset("lambda/orchestration_service")
+        
+        orchestration_service_lambda = DockerImageFunction(self, "OrchestrationServiceHandler",
+            code=orchestration_service_docker_image,
             role=lambda_role,
+            timeout=Duration.seconds(900),
             environment={
-                "S3_BUCKET": secret.secret_value_from_json("S3_BUCKET").to_string(),
-                "SECRET_KEY": secret.secret_value_from_json("SECRET_KEY").to_string(),
-                "FILE_SERVICE_URL": "http://file-service-url"
+                "FILE_SERVICE_URL": file_service_api.url,
+                "ATHENA_SERVICE_URL": "http://athena-service-url"
             }
         )
 
@@ -64,14 +69,16 @@ class MyMicroservicesProjectStack(core.Stack):
             handler=orchestration_service_lambda
         )
 
-        # Athena Service Lambda
-        athena_service_lambda = _lambda.Function(self, "AthenaServiceHandler",
-            runtime=_lambda.Runtime.PYTHON_3_8,
-            code=_lambda.Code.from_asset("lambda/athena_service"),
-            handler="main.lambda_handler",
+        # Athena Service Lambda using Docker Image
+        athena_service_docker_image = DockerImageCode.from_image_asset("lambda/athena_service")
+        
+        athena_service_lambda = DockerImageFunction(self, "AthenaServiceHandler",
+            code=athena_service_docker_image,
             role=lambda_role,
+            timeout=Duration.seconds(900),
             environment={
-                "ATHENA_OUTPUT_LOCATION": "s3://your-athena-output-bucket/"
+                "SECRET_TOTTO": "totto_data_analytics",
+                "ATHENA_OUTPUT_LOCATION": "s3://aws-athena-results-nalsani/"
             }
         )
 
@@ -79,3 +86,8 @@ class MyMicroservicesProjectStack(core.Stack):
         athena_service_api = apigw.LambdaRestApi(self, "AthenaServiceEndpoint",
             handler=athena_service_lambda
         )
+
+# Instantiate the stack
+app = core.App()
+MyMicroservicesProjectStack(app, "MyMicroservicesProjectStack")
+app.synth()
